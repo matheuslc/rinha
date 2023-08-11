@@ -1,6 +1,30 @@
 version: "3.8"
 
 services:
+  test:
+    build:
+      context: .
+      target: builder
+    hostname: test
+    restart: always
+    command: sh -c "go test -v ./..."
+    depends_on: 
+      db:
+        condition: service_healthy
+    environment:
+      - ENV=dev
+      - POSTGRES_HOST=rinha
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=pgpass
+      - POSTGRES_DB=rinha
+      - DATABASE_URL=postgres://postgres:pgpass@rinha:5432/rinha?sslmode=disable
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: '0.5GB'
+
   api1:
     build: .
     hostname: api1
@@ -17,6 +41,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=pgpass
       - POSTGRES_DB=rinha
+      - DATABASE_URL=postgres://postgres:pgpass@rinha:5432/rinha?sslmode=disable
     deploy:
       resources:
         limits:
