@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type person struct {
@@ -19,7 +20,7 @@ type person struct {
 }
 
 type repo struct {
-	conn *pgx.Conn
+	conn *pgxpool.Pool
 }
 
 type dbWriter interface {
