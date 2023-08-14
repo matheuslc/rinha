@@ -18,29 +18,25 @@ func TestBatcher(t *testing.T) {
 		os.Exit(1)
 	}
 
-	dbWriter := &repo{conn: conn}
+	dbWriter := &copyRepo{conn: conn}
 
-	max := 10
-	batchCout := 50000
+	max := 50000
+	batchCout := 5000
 	ctx := context.Background()
 	inC := make(chan *person, 100)
 	outC := make(chan []*person, 100)
 
 	go batcher(ctx, inC, outC, max, 30*time.Second)
 	go batcher(ctx, inC, outC, max, 30*time.Second)
-	go batcher(ctx, inC, outC, max, 30*time.Second)
-	go batcher(ctx, inC, outC, max, 30*time.Second)
-	go batcher(ctx, inC, outC, max, 30*time.Second)
-	go batcher(ctx, inC, outC, max, 30*time.Second)
 
 	go func() {
 		for i := 0; i <= max*batchCout; i++ {
 			inC <- &person{
-				uuid:     uuid.New(),
-				name:     "test",
-				nickname: "test-nickame",
-				birthday: time.Now().Add(-30 * time.Hour * 24 * 365),
-				stack:    []string{"golang"},
+				UUID:     uuid.New(),
+				Name:     "test",
+				Nickname: "test-nickame",
+				Birthday: time.Now().Add(-30 * time.Hour * 24 * 365),
+				Stack:    []string{"golang"},
 			}
 		}
 	}()
@@ -48,11 +44,11 @@ func TestBatcher(t *testing.T) {
 	go func() {
 		for i := 0; i <= max*batchCout; i++ {
 			inC <- &person{
-				uuid:     uuid.New(),
-				name:     "test",
-				nickname: "test-nickame",
-				birthday: time.Now().Add(-30 * time.Hour * 24 * 365),
-				stack:    []string{"golang"},
+				UUID:     uuid.New(),
+				Name:     "test",
+				Nickname: "test-nickame",
+				Birthday: time.Now().Add(-30 * time.Hour * 24 * 365),
+				Stack:    []string{"golang"},
 			}
 		}
 	}()
@@ -60,14 +56,9 @@ func TestBatcher(t *testing.T) {
 	// go writer(ctx, outC, dbWriter)
 	go writer(ctx, outC, dbWriter)
 	go writer(ctx, outC, dbWriter)
-	go writer(ctx, outC, dbWriter)
-	go writer(ctx, outC, dbWriter)
-	go writer(ctx, outC, dbWriter)
-	go writer(ctx, outC, dbWriter)
-	go writer(ctx, outC, dbWriter)
 
 	// magic time to just wait the work finish
-	time.Sleep(20 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	var count int
 	if err := conn.QueryRow(context.Background(), "SELECT COUNT(*) FROM person").Scan(&count); err != nil {

@@ -5,13 +5,14 @@ CREATE TABLE IF NOT EXISTS person(
     name TEXT NOT NULL,
     nickname TEXT NOT NULL,
     birthday TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    stack []TEXT
 );
 
-CREATE TABLE IF NOT EXISTS stack(
-    id UUID PRIMARY KEY,
-    name TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- CREATE TABLE IF NOT EXISTS stack(
+--     id UUID PRIMARY KEY,
+--     name TEXT NOT NULL,
+--     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- );
 
 COMMIT;
