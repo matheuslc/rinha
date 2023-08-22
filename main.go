@@ -45,6 +45,7 @@ type dbWriter interface {
 type reader interface {
 	find(ctx context.Context, id uuid.UUID) (*person, error)
 	search(ctx context.Context, term string) ([]*person, error)
+	count(ctx context.Context) (int, error)
 }
 
 func main() {
@@ -87,7 +88,7 @@ func main() {
 	router.POST("/pessoas", createUserHandler(inC))
 	router.GET("/pessoas", searchPerson(repoReader))
 	router.GET("/pessoas/:id", getPerson(repoReader))
-	router.GET("/contagem-pessoas", empty)
+	router.GET("/contagem-pessoas", count(repoReader))
 
 	router.Logger.Fatal(router.Start("0.0.0.0:80"))
 }
@@ -104,6 +105,17 @@ func (r *readerRepo) find(ctx context.Context, id uuid.UUID) (*person, error) {
 
 	u.Birthday = t.Format("2006-01-02")
 	return u, nil
+}
+
+func (r *readerRepo) count(ctx context.Context) (int, error) {
+	var count int
+	row := r.conn.QueryRow(ctx, "SELECT count(1) FROM person")
+	err := row.Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+
+	return count, nil
 }
 
 func (r *readerRepo) search(ctx context.Context, term string) ([]*person, error) {
@@ -300,6 +312,17 @@ func searchPerson(reader reader) func(c echo.Context) error {
 		}
 
 		return c.JSON(http.StatusOK, u)
+	}
+}
+
+func count(r reader) func(c echo.Context) error {
+	return func(c echo.Context) error {
+		count, err := r.count(context.Background())
+		if err != nil {
+			return c.String(http.StatusNotFound, "Not Found")
+		}
+
+		return c.JSON(http.StatusOK, count)
 	}
 }
 
