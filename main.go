@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 )
+
+var userCache = sync.Map{}
 
 type person struct {
 	UUID     uuid.UUID `json:"id"`
@@ -36,7 +40,6 @@ type copyRepo struct {
 
 type dbWriter interface {
 	run(ctx context.Context, p []*person) error
-	single(ctx context.Context, p *person) error
 }
 
 type reader interface {
@@ -46,7 +49,16 @@ type reader interface {
 
 func main() {
 	ctx := context.Background()
-	conn, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+	cfgConn, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to parse DATABASE_URL: %v\n", err)
+		os.Exit(1)
+	}
+
+	cfgConn.MaxConns = 10
+	cfgConn.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+
+	conn, err := pgxpool.NewWithConfig(ctx, cfgConn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
 		os.Exit(1)
@@ -54,31 +66,28 @@ func main() {
 
 	defer conn.Close()
 
-	// dbWriter := &copyRepo{conn: conn}
 	repoWriter := &repo{conn: conn}
 	repoReader := &readerRepo{conn: conn}
 
-	// duration := 5 * time.Millisecond
-	// batchSize := 1000
-	// inC := make(chan *person, 10000)
-	// batcherOutc := make(chan []*person, 10)
+	parallel := 30
+	duration := 5 * time.Second
+	batchSize := 1000
+	inC := make(chan *person, 100000)
+	batcherOutc := make(chan []*person, 1000)
 
-	// Spawning 4 batch workers
-	// go batcher(ctx, inC, batcherOutc, batchSize, duration)
-	// go batcher(ctx, inC, batcherOutc, batchSize, duration)
-	// go batcher(ctx, inC, batcherOutc, batchSize, duration)
+	for i := 0; i < parallel; i++ {
+		go batcher(ctx, inC, batcherOutc, batchSize, duration)
+	}
 
-	// Spawning 2 db workers
-	// go writer(ctx, batcherOutc, repoWriter)
-	// go writer(ctx, batcherOutc, repoWriter)
-	// go singleWriter(ctx, inC, repoWriter)
-	// go singleWriter(ctx, inC, repoWriter)
+	for i := 0; i < parallel; i++ {
+		go writer(ctx, batcherOutc, repoWriter)
+	}
 
 	router := echo.New()
-	router.POST("/pessoas", createUserHandler(*repoWriter))
+	router.POST("/pessoas", createUserHandler(inC))
 	router.GET("/pessoas", searchPerson(repoReader))
 	router.GET("/pessoas/:id", getPerson(repoReader))
-	// router.GET("/contagem-pessoas", getPerson)
+	router.GET("/contagem-pessoas", empty)
 
 	router.Logger.Fatal(router.Start("0.0.0.0:80"))
 }
@@ -98,7 +107,11 @@ func (r *readerRepo) find(ctx context.Context, id uuid.UUID) (*person, error) {
 }
 
 func (r *readerRepo) search(ctx context.Context, term string) ([]*person, error) {
-	rows, err := r.conn.Query(context.Background(), "SELECT uuid, name, nickname, birthday FROM person WHERE name LIKE $1 or nickname LIKE $1", "%"+term+"%")
+	rows, err := r.conn.Query(
+		context.Background(),
+		"SELECT uuid, name, nickname, birthday, stack FROM person WHERE search LIKE '%' || $1 || '%'",
+		term,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -108,13 +121,16 @@ func (r *readerRepo) search(ctx context.Context, term string) ([]*person, error)
 	var people []*person
 	for rows.Next() {
 		var t time.Time
+		var stack string
 		u := &person{}
-		err := rows.Scan(&u.UUID, &u.Name, &u.Nickname, &t)
+
+		err := rows.Scan(&u.UUID, &u.Name, &u.Nickname, &t, &stack)
 		if err != nil {
 			return nil, err
 		}
 
 		u.Birthday = t.Format("2006-01-02")
+		u.Stack = strings.Split(stack, ",")
 		people = append(people, u)
 	}
 
@@ -125,8 +141,20 @@ func (r *repo) run(ctx context.Context, p []*person) error {
 	batch := &pgx.Batch{}
 
 	for _, person := range p {
-		bday, _ := time.Parse("2006-01-02", person.Birthday)
-		batch.Queue("INSERT INTO person(uuid, name, nickname, birthday) VALUES($1, $2, $3, $4)", person.UUID, person.Name, person.Nickname, bday)
+		bday, err := time.Parse("2006-01-02", person.Birthday)
+		if err != nil {
+			return err
+		}
+
+		stack := strings.Join(person.Stack, ",")
+		batch.Queue(
+			"INSERT INTO person(uuid, name, nickname, birthday, stack) VALUES($1, $2, $3, $4, $5)",
+			person.UUID,
+			person.Name,
+			person.Nickname,
+			bday,
+			stack,
+		)
 	}
 
 	br := r.conn.SendBatch(ctx, batch)
@@ -151,14 +179,17 @@ func (r *copyRepo) run(ctx context.Context, p []*person) error {
 	_, err := r.conn.CopyFrom(
 		ctx,
 		pgx.Identifier{"person"},
-		[]string{"uuid", "name", "nickname", "birthday"},
+		[]string{"uuid", "name", "nickname", "birthday", "stack"},
 		pgx.CopyFromSlice(len(p), func(i int) ([]any, error) {
 			t, _ := time.Parse("2006-01-02", p[i].Birthday)
+			stack := strings.Join(p[i].Stack, ",")
+
 			return []any{
 				p[i].UUID,
 				p[i].Name,
 				p[i].Nickname,
 				t,
+				stack,
 			}, nil
 		}),
 	)
@@ -168,17 +199,6 @@ func (r *copyRepo) run(ctx context.Context, p []*person) error {
 	}
 
 	return nil
-}
-
-func singleWriter(ctx context.Context, inC chan *person, w dbWriter) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case p := <-inC:
-			w.single(ctx, p)
-		}
-	}
 }
 
 func writer(ctx context.Context, inC chan []*person, w dbWriter) {
@@ -220,7 +240,7 @@ func batcher(ctx context.Context, inC chan *person, outC chan []*person, max int
 	}
 }
 
-func createUserHandler(writer repo) func(c echo.Context) error {
+func createUserHandler(inC chan *person) func(c echo.Context) error {
 	return func(c echo.Context) error {
 		u := person{}
 		if err := c.Bind(&u); err != nil {
@@ -228,7 +248,10 @@ func createUserHandler(writer repo) func(c echo.Context) error {
 		}
 
 		u.UUID = uuid.New()
-		writer.single(context.Background(), &u)
+		inC <- &u
+
+		// Loading new user into cache
+		userCache.Store(u.UUID.String(), u)
 
 		c.Response().Header().Set("Location", fmt.Sprintf("/pessoas/%s", u.UUID))
 
@@ -240,10 +263,21 @@ func getPerson(reader reader) func(c echo.Context) error {
 	return func(c echo.Context) error {
 		id := c.Param("id")
 		idParsed := uuid.MustParse(id)
+
+		// let's look into the in memory cache first
+		if u, ok := userCache.Load(id); ok {
+			return c.JSON(http.StatusOK, u)
+		}
+
+		// Here, we check if the request hasn't already been forwarded
+		// and if it is wasn't, we check the cache again. Otherwise, we will query the database
+		if c.Request().Header.Get("x-forwarded") == "" {
+			c.Response().Header().Set("x-forwarded", "true")
+			return c.String(http.StatusNotFound, "Not Found")
+		}
+
 		u, err := reader.find(context.Background(), idParsed)
 		if err != nil {
-			fmt.Println("id", id)
-			fmt.Println("err", err)
 			return c.String(http.StatusNotFound, "Not Found")
 		}
 
@@ -259,10 +293,9 @@ func searchPerson(reader reader) func(c echo.Context) error {
 			return c.String(http.StatusBadRequest, "invalid request")
 		}
 
-		// return c.JSON(http.StatusOK, "ok")
-
 		u, err := reader.search(context.Background(), term)
 		if err != nil {
+			fmt.Println("search error", err)
 			return c.String(http.StatusNotFound, "got error")
 		}
 
@@ -270,6 +303,8 @@ func searchPerson(reader reader) func(c echo.Context) error {
 	}
 }
 
+// empty is a helper function to just return a 200 OK to any unimplemented endpoint
+// it's useful to isolate test cases
 func empty(c echo.Context) error {
 	return c.String(http.StatusOK, "ok")
 }

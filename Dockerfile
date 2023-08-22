@@ -15,11 +15,11 @@ EXPOSE 80
 CMD /app/api
 
 # Final image
-# FROM alpine:latest as runner
-# RUN apk --no-cache add ca-certificates
+FROM alpine:latest as runner
+RUN apk --no-cache add ca-certificates
 
-# WORKDIR /app
-# COPY --from=builder /app/api .
-# EXPOSE 80
+WORKDIR /app
+COPY --from=builder /app/api .
+EXPOSE 80
 
-# CMD /app/api
+CMD /app/api

@@ -35,7 +35,7 @@ func TestBatcher(t *testing.T) {
 				UUID:     uuid.New(),
 				Name:     "test",
 				Nickname: "test-nickame",
-				Birthday: time.Now().Add(-30 * time.Hour * 24 * 365),
+				Birthday: "2023-01-01",
 				Stack:    []string{"golang"},
 			}
 		}
@@ -47,7 +47,7 @@ func TestBatcher(t *testing.T) {
 				UUID:     uuid.New(),
 				Name:     "test",
 				Nickname: "test-nickame",
-				Birthday: time.Now().Add(-30 * time.Hour * 24 * 365),
+				Birthday: "2023-01-01",
 				Stack:    []string{"golang"},
 			}
 		}
